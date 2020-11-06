@@ -1,0 +1,49 @@
+library(tidyverse)
+library(timetk)
+library(modeltime)
+library(tidymodels)
+library(lubridate)
+
+
+bike <- timetk::bike_sharing_daily
+
+
+bike %>% 
+  plot_time_series(dteday, registered)
+
+
+##Split the data
+split <- initial_time_split(bike)
+bike_train <- training(split)    
+bike_test <- testing(split)
+
+
+##Model using arrima
+model_arima <- arima_reg() %>% 
+  set_engine('auto_arima') %>% 
+  fit(registered ~ dteday + factor(holiday) + temp, data = bike_train)
+
+
+##Model smoothing
+model_fit_ets <- exp_smoothing() %>%
+  set_engine(engine = "ets") %>%
+  fit(registered ~ dteday, data = bike_train)
+
+##Model Linear
+model_fit_lm <- linear_reg() %>% 
+  set_engine('lm') %>% 
+  fit(registered ~ as.numeric(dteday) + factor(month(dteday)), data = bike_train)
+
+
+##Define a model table with two algoritmhs
+
+model_tbs <- modeltime_table(model_arima, model_fit_ets)
+
+## Calibrate
+
+calibration_tbs <- model_tbs %>% modeltime_calibrate(new_data = bike_test)
+
+## accuracy
+
+calibration_tbs %>% modeltime_accuracy()
+
