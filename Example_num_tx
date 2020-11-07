@@ -1,0 +1,82 @@
+library(tidyverse)
+library(lubridate)
+library(modeltime)
+library(tidymodels)
+library(timetk)
+
+##Data
+tx <- read.csv('tx_1000.csv', sep = ';', stringsAsFactors = FALSE)
+str(tx)
+
+tx <- tx %>% 
+  rename(date = Data.TX) %>% 
+  mutate(date = as.Date(date, format = '%d/%m/%y'))
+
+##Somente doador falecido e data > 2010
+tx <- tx %>% 
+  filter(Doador == 1) %>% 
+  filter(date > as.Date('2010-01-01'))
+
+#Count tx
+tx_count <- tx %>% 
+  group_by(date) %>% 
+  count()
+
+##Sequencia Data
+data_tx <- seq.Date(from = as.Date('2010-01-01'), to = as.Date('2016-08-01'),
+                    by = 'day')
+
+data_tx <- as.data.frame(data_tx) %>% rename(date = data_tx)
+
+##full join
+tx_total <- data_tx %>% full_join(tx_count)
+
+tx_total <- tx_total %>% 
+  mutate(n = ifelse(is.na(n), 0, n))
+
+##Plot time serie
+tx_total %>% 
+  plot_time_series(.date_var = date, .value = n)
+
+tx_total %>% 
+  plot_seasonal_diagnostics(.date_var = date, .value = n)
+
+##Split the Data
+split <- initial_time_split(tx_total)
+tx_train <- training(split)
+tx_test <- testing(split)
+
+
+##Arima model
+model_arima <- arima_reg() %>% 
+  set_engine('auto_arima') %>% 
+  fit(n ~ date, data = tx_train)
+
+model_xgb <- arima_boost() %>% 
+  set_engine('arima_xgboost') %>% 
+  fit(n ~ date + month(date), data = tx_train)
+
+
+model_prophet <- prophet_boost() %>% 
+  set_engine('prophet_xgboost') %>% 
+  fit(n ~ date + month(date, label = TRUE), data = tx_train)
+
+##Plot
+model_tbs <- modeltime_table(model_arima, model_xgb, model_prophet)
+
+##Calibrare
+model_calibrate <- modeltime_calibrate(model_tbs, new_data = tx_test)
+
+##Accuray
+model_calibrate %>% modeltime_accuracy()
+
+##Plot forecast
+model_calibrate %>% 
+  modeltime_forecast(actual_data = tx_train, new_data = tx_test) %>% 
+  plot_modeltime_forecast()
+
+#Plot future
+model_calibrate %>% 
+  modeltime_refit(tx_total) %>% 
+  modeltime_forecast(actual_data = tx_total, h = 2400) %>% 
+  plot_modeltime_forecast()
